@@ -1,0 +1,1977 @@
+---
+title: "MCC-MELD Cohort Curation"
+author: "Luchang"
+date: "2025-03-26"
+output: 
+ html_document:
+  code_folding: hide
+  toc: true
+  toc_depth: 3  				# upto three depths of headings (specified by #, ## and ###)
+  number_sections: true 	# if you want number sections at each table header
+  theme: united 
+---
+
+
+```{r, include=F}
+
+library(tidycensus)
+library(Gmisc)
+library(dplyr)
+library(ggplot2)
+library(gt)
+library(ggmap)
+library(zipcodeR)
+library(gtsummary)
+library(lubridate)
+library(openxlsx)
+library(stringr)
+library(readxl)
+library(ggplot2)
+library(maps)
+library(dplyr)
+
+```
+
+
+# Dataset
+```{r}
+
+small <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Study cohort folder/MCC_MELD_studycohort_20250129.csv")
+
+# smoking final
+smoking <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/4_NLP_Smoking_baseline_20250322.csv")
+
+# egfr final
+egfr <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/Cohort_EGFR_FINAL.csv")
+
+# Prior history of cancer
+ph <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/2_CancerHistories_20250212.csv")
+
+# COPD, pulmonary nodule
+copd <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/3_Comorbidities_baseline_COPD_PN_20250212.csv")
+
+
+
+
+dim(small); length(unique(small$pat_id))
+dim(smoking); length(unique(smoking$pat_id))
+dim(egfr); length(unique(egfr$pat_id))
+
+# > dim(small); length(unique(small$pat_id))
+# [1] 9573   66
+# [1] 9573
+# > dim(smoking); length(unique(smoking$pat_id))
+# [1] 9573   19
+# [1] 9573
+# > dim(egfr); length(unique(egfr$pat_id))
+# [1] 9646    2
+# [1] 9646
+
+small <- merge(small, smoking, by = "pat_id")
+small <- merge(small, egfr, by = "pat_id", all.x=T); dim(small); length(unique(small$pat_id))
+# [1] 9573   85
+# [1] 9573
+
+
+ph <- subset(ph, MP.status == "prior")
+dim(ph); length(unique(ph$pat_id))
+# [1] 402  11
+# [1] 363
+
+ph <- ph[order(ph$pat_id, ph$date.MP),]
+ph1 <- ph[!duplicated(ph[c("pat_id")]),]; dim(ph1)
+
+small <- merge(small, ph1, by = "pat_id", all.x=T); dim(small)
+small$ph <- ifelse(small$MP.status == "prior", 1, 0)
+small$ph[is.na(small$ph)] <- 0 
+
+dim(copd); length(unique(copd$pat_id))
+
+small <- merge(small, copd, by = "pat_id")
+
+```
+
+# Table 1
+```{r}
+
+small$event.death <- as.factor(as.character(small$event.death))
+small$chemo.ix <- as.factor(as.character(small$chemo.ix))
+small$surgery.ix <- as.factor(as.character(small$surgery.ix))
+small$radio.ix <- as.factor(as.character(small$radio.ix))
+
+
+small$ph <- as.factor(as.character(small$ph))
+small$COPD <- as.factor(as.character(small$COPD))
+small$PN <- as.factor(as.character(small$PN))
+
+small$Gender[ small$Gender == "Other (intersex, DSD)"] <- "Female"
+small$Gender[ small$Gender == "Unknown"] <- "Female"
+
+small$EGFRt <- ifelse(small$EGFR_FINAL == "Positive", "1_Positive",
+               ifelse(small$EGFR_FINAL == "Unknown", "3_Unknown", "2_Negative/VUS"))
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Race,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["Gender"]] <- getT1Stat("Gender")
+table_data[["Age at dx"]] <- getT1Stat("Age_dx")
+table_data[["Hospital.Location"]] <- getT1Stat("Hospital.Location")
+table_data[["event.death"]] <- getT1Stat("event.death")
+table_data[["seer.stage"]] <- getT1Stat("seer.stage")
+table_data[["ajcc.stage"]] <- getT1Stat("ajcc.stage")
+table_data[["hist.ix"]] <- getT1Stat("hist.ix")
+
+table_data[["chemo.ix"]] <- getT1Stat("chemo.ix")
+table_data[["radio.ix"]] <- getT1Stat("radio.ix")
+table_data[["surgery.ix"]] <- getT1Stat("surgery.ix")
+
+table_data[["EGFR_Structure"]] <- getT1Stat("EGFR_structure")
+table_data[["EGFR_Final"]] <- getT1Stat("EGFR_FINAL")
+table_data[["EGFR targetable mutation"]] <- getT1Stat("EGFRt")
+table_data[["Smoking status"]] <- getT1Stat("smkstat1")
+table_data[["Smoking duration"]] <- getT1Stat("dur1")
+table_data[["Smoking pack-years"]] <- getT1Stat("py1")
+table_data[["Marital status"]] <- getT1Stat("marry.epic")
+table_data[["FH Lung"]] <- getT1Stat("FH_lung")
+table_data[["Prior history of cancer"]] <- getT1Stat("ph")
+table_data[["COPD"]] <- getT1Stat("COPD")
+table_data[["Pulmonary Nodule"]] <- getT1Stat("PN")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Table 1. Baseline characteristics by Race",
+  ctable = TRUE )
+
+
+```
+
+## EGFR by year
+```{r}
+
+table(small$yr.dx, small$EGFRt, useNA="always")
+
+library(gmodels)
+CrossTable(small$yr.dx,small$EGFRt, prop.t=F, prop.c=F, prop.chisq = F)
+
+small$EGFR_testing <- ifelse(small$EGFRt == "3_Unknown", 0, 1)
+CrossTable(small$yr.dx,small$EGFR_testing, prop.t=F, prop.c=F, prop.chisq = F)
+
+summary_df <- small %>%
+  group_by(yr.dx) %>%
+  summarise(
+    proportion = mean(EGFR_testing),
+    count = n()
+  )
+
+summary_df <- data.frame(summary_df)
+summary_df1 <- subset(summary_df, yr.dx >= 2003)
+
+# Create line plot
+ggplot(summary_df1, aes(x = yr.dx, y = proportion)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(color = "steelblue", size = 2) + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits=c(0,1)) +
+  labs(
+   # title = "Known EGFR status (out of total cases) by year of lung cancer diagnosis",
+    x = "Year of lung cancer diagnosis",
+    y = "Proportion of Known EGFR status (out of total lung cancer)"
+  ) +
+  theme_minimal()
+
+```
+
+# Figure 3
+```{r}
+
+small$ysq1[ is.na(small$ysq1) ] <- 9999
+
+small$smkstat2 <- ifelse(small$smkstat1 == "Never", "1_Never",
+                  ifelse(small$smkstat1 == "Former" & small$ysq1 > 15 & small$ysq1 != 9999, "2_LongQuit", 
+                  ifelse(small$smkstat1 == "Former", "3_RecentQuit",
+                  ifelse(small$smkstat1 == "Current", "4_Current", "5_Unknown"))))
+
+table(small$smkstat2, useNA="always")
+     # 1_Never   2_LongQuit 3_RecentQuit    4_Current    5_Unknown         <NA> 
+     #    1565         1566         3221         1214         2007            0 
+
+table(small$smkstat2, small$EGFRt)
+    #              1_Positive 2_Negative/VUS 3_Unknown
+    # 1_Never             521            371       673
+    # 2_LongQuit          210            584       772
+    # 3_RecentQuit        246           1110      1865
+    # 4_Current            84            290       840
+    # 5_Unknown            31             41      1935
+
+small$EGFRt1 <- ifelse(small$EGFRt == "1_Positive", 1, 0)
+small$EGFRt1 <- as.factor(as.character(small$EGFRt1))
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Gender,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Sex",
+  ctable = TRUE )
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$smkstat2,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by SMK",
+  ctable = TRUE )
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Race,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Race",
+  ctable = TRUE )
+
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Hospital.Location,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Hospital",
+  ctable = TRUE )
+
+
+
+```
+
+## Figure 3 (after excluding 'unknown' EGFR)
+```{r}
+
+small1 <- subset(small, EGFR_FINAL != "Unknown")
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small1[, varname],
+                        small1$Gender,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Sex",
+  ctable = TRUE )
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small1[, varname],
+                        small1$smkstat2,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by SMK",
+  ctable = TRUE )
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small1[, varname],
+                        small1$Race,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Race",
+  ctable = TRUE )
+
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small1[, varname],
+                        small1$Hospital.Location,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Hospital",
+  ctable = TRUE )
+
+
+```
+
+# Figure 3
+```{r}
+
+small$EGFRt2 <- ifelse(small$EGFR_structure == "Positive", 1, 0)
+small$EGFRt2 <- as.factor(as.character(small$EGFRt2))
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Gender,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt2")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Sex",
+  ctable = TRUE )
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$smkstat2,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt2")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by SMK",
+  ctable = TRUE )
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Race,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt2")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Race",
+  ctable = TRUE )
+
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Hospital.Location,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt2")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Hospital",
+  ctable = TRUE )
+
+
+
+```
+
+
+
+
+# Geospatial mapping; Hot spot
+## Our patient pop (total LC) divided by Census Track Pop, i.e., LC rates/100,000
+```{r}
+
+geo <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/1_AreaData_20250212.csv")
+geo2 <- merge(small, geo, by = "pat_id");  
+
+geo2$lat <- as.numeric(as.character(geo2$lat))
+geo2$long <- as.numeric(as.character(geo2$long))
+geo2$county <- (as.character(geo2$county))
+geo2$county <- ifelse(nchar(geo2$county) == 2, paste0("0", geo2$county), geo2$county )
+
+geo2$FIPS_blockg <- ifelse(nchar(geo2$FIPS ) == 11, paste0("0", geo2$FIPS ), geo2$FIPS )  # Block group (12 digits)
+geo2$FIPS_tract <- ifelse(nchar(geo2$GEOID ) == 10, paste0("0", geo2$GEOID ), geo2$GEOID ) # Census tract (11 digits)
+geo2$FIPS_county <- substr(geo2$GEOID, 1, 9)
+
+
+
+# Maps
+nyc_counties <- c("061", "047", "081")  # NYC FIPS codes, MCC catchment areas; Manhattan, Queens, Brooklyn
+nyc_map <- map_data("county") %>% filter(region == "new york" & subregion %in% c("new york", "kings", "queens"))
+tracts <- tigris::tracts(state = "NY", county= c("061", "081", "047"), cb = TRUE, year = 2023)
+counties <- tigris::counties(state = "NY", cb = TRUE, year = 2023) %>% filter(COUNTYFP %in% c("061", "081", "047"))  # Filter for NYC counties
+
+points1 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL == "Positive") # EGFR positive patient points
+points2 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL != "Positive") # EGFR negative patient points
+
+########################################################
+
+      ##### Total count of our MCC-MELD patients
+      a <- table(geo2$FIPS_tract)
+      b <- data.frame(a)
+      colnames(b) <- c("GEOID_Tract", "Current_Count")
+      c <- b
+      c$GEOID_Tract <- as.character(c$GEOID_Tract)
+
+      ##### Get population count from Census survey 
+      pop_data <- get_decennial(
+        geography = "tract",
+        variables = "P1_001N",
+        state = "NY",          # Change to your state
+        county = c("061", "047", "081"),   
+        year = 2020,
+        sumfile = "pl"
+      )      
+      
+      pop <- data.frame(pop_data)
+      pop1 <- pop[c(1, 4)]
+      colnames(pop1) <- c("GEOID_Tract", "Pop")
+      
+      pop2 <- merge(c, pop1, by = "GEOID_Tract", all.y=T); dim(c); dim(pop1); dim(pop2)
+      # [1] 2883    2
+      # [1] 1840    2
+      # [1] 1490    3      
+      
+      pop2$LCrate <- round(pop2$Current_Count/pop2$Pop * 100000,1) # if pop < 1000, we didn't estimate
+      pop2$LCrate[pop2$Pop < 1000] <- 0 # I also tried NA, but it looks a bit confusing
+      pop2$LCrate[is.na(pop2$LCrate)] <- 0
+      
+      summary(pop2$LCrate) # per 100,000
+       # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+       # 0.00   27.10   68.00   93.03  136.05  950.00 
+      
+      geo3 <- pop2
+
+      
+      
+### Shape file##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+geo3$ID <- as.character(geo3$GEOID_Tract)
+
+merged_data <- tracts %>%
+  left_join(geo3, by = "ID")
+
+merged_data$LCrate[merged_data$LCrate > 500] <- 500
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "rocket", name = "Rates", limits=c(0,500)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "LC rates (per 100,000)",
+    subtitle = "Source: MCC-MELD (Numerator) and Census (Denominator)"
+    #caption = "Data Source: MCC-MELD and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )+
+  theme(
+    plot.title = element_text(size = 20),
+    plot.subtitle = element_text(size = 16)  # Change the number to increase/decrease size
+  )
+
+
+
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "rocket", name = "LC rate/100,000", limits=c(0,500)) +  # Gradient color scale
+#   theme_minimal() +
+#   # geom_point(data = points2, aes(x = long, y = lat), color = "red", size = 0.08, alpha = 0.7) +  
+#   # geom_point(data = points1, aes(x = long, y = lat), color = "green", size = 0.2, alpha = 0.7) +  
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "LC rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+
+
+```
+
+## Our patient pop (EGFR LC w/wo EGFR dots) divided by Census Track Pop
+```{r}
+
+points1 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL == "Positive") # EGFR positive patient points
+points2 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL != "Positive") # EGFR negative patient points
+
+########################################################
+
+      ##### Total count of our MCC-MELD patients
+      geo2$egfrp <- ifelse(geo2$EGFR_structure == "Positive" , 1, 0)
+  
+      dat <- subset(geo2, egfrp==1)
+      ##### Total count of our MCC-MELD patients
+      a <- table(dat$FIPS_tract)
+      b <- data.frame(a)
+      colnames(b) <- c("GEOID_Tract", "Current_Count")
+      c <- b
+      c$GEOID_Tract <- as.character(c$GEOID_Tract)
+
+
+      ##### Get population count from Census survey
+      pop_data <- get_decennial(
+        geography = "tract",
+        variables = "P1_001N",
+        state = "NY",          # Change to your state
+        county = c("061", "047", "081"),
+        year = 2020,
+        sumfile = "pl"
+      )
+
+      pop <- data.frame(pop_data)
+      pop1 <- pop[c(1, 4)]
+      colnames(pop1) <- c("GEOID_Tract", "Pop")
+      
+      pop2 <- merge(c, pop1, by = "GEOID_Tract", all.y=T); dim(c); dim(pop1); dim(pop2)
+      # [1] 2883    2
+      # [1] 1840    2
+      # [1] 1490    3      
+      
+      pop2$LCrate <- round(pop2$Current_Count/pop2$Pop * 100000,1) # if pop < 1000, we didn't estimate
+      pop2$LCrate[pop2$Pop < 1000] <- 0
+      pop2$LCrate[is.na(pop2$LCrate)] <- 0
+      
+  summary(pop2$LCrate) # per 100,000 <--- EGFR LC rate
+   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   # 0.00    0.00    0.00    5.76    0.00  133.20       
+
+       # summary(pop2$LCrate) # per 100,000 <-- TOtal LC rate
+       # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+       # 0.00   27.10   68.00   93.03  136.05  950.00 
+      
+      
+      
+      
+      geo3 <- pop2
+
+      
+      
+### Shape file##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+geo3$ID <- as.character(geo3$GEOID_Tract)
+
+merged_data <- tracts %>%
+  left_join(geo3, by = "ID")
+
+
+merged_data$LCrate[merged_data$LCrate > 50] <- 50
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "mako", name = "Rates", limits=c(0,50)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "EGFRm LC rates (per 100,000)",
+    subtitle = "Source: MCC-MELD (Numerator) and Census (Denominator)"
+    #caption = "Data Source: MCC-MELD and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )+
+  theme(
+    plot.title = element_text(size = 20),
+    plot.subtitle = element_text(size = 16)  # Change the number to increase/decrease size
+  )
+
+
+# 
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "mako", name = "EGFRm LC rate/100,000", limits=c(0,100)) +  # Gradient color scale
+#   #geom_point(data = points1, aes(x = long, y = lat), color = "green", size = 0.05, alpha = 0.7) +  
+#   theme_minimal() +
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "EGFRm LC rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+# 
+# 
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "mako", name = "EGFRm LC rate/100,000", limits=c(0,200)) +  # Gradient color scale
+#   geom_point(data = points1, aes(x = long, y = lat), color = "orange", size = 0.03, alpha = 0.7) +  
+#   theme_minimal() +
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "EGFRm LC rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+
+```
+
+## Our patient pop (Smoking rate w/wo EGFR dots)
+```{r}
+
+
+      ##### Number of ever smokers in MCC-MELD
+      geo2$ever <- ifelse(geo2$smkstat1 == "Negative" , 0, 1)
+  
+      dat <- subset(geo2, ever==1)
+      ##### Total count of our MCC-MELD patients
+      a <- table(dat$FIPS_tract)
+      b <- data.frame(a)
+      colnames(b) <- c("GEOID_Tract", "Current_Count")
+      c <- b
+      c$GEOID_Tract <- as.character(c$GEOID_Tract)
+
+
+      ##### Get population count from Census survey
+      pop_data <- get_decennial(
+        geography = "tract",
+        variables = "P1_001N",
+        state = "NY",          # Change to your state
+        county = c("061", "047", "081"),
+        year = 2020,
+        sumfile = "pl"
+      )
+
+      pop <- data.frame(pop_data)
+      pop1 <- pop[c(1, 4)]
+      colnames(pop1) <- c("GEOID_Tract", "Pop")
+      
+      pop2 <- merge(c, pop1, by = "GEOID_Tract", all.y=T); dim(c); dim(pop1); dim(pop2)
+      # [1] 2883    2
+      # [1] 1840    2
+      # [1] 1490    3      
+      
+      pop2$EVERrate <- round(pop2$Current_Count/pop2$Pop * 100000,1) # if pop < 1000, we didn't estimate
+      pop2$EVERrate[pop2$Pop < 1000] <- 0
+      pop2$EVERrate[is.na(pop2$EVERrate)] <- 0
+      
+  summary(pop2$EVERrate) # per 100,000 <--- EGFR LC rate
+     # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+     # 0.00   27.10   68.00   93.03  136.05  950.00 
+      
+      
+      
+      
+      geo3 <- pop2
+
+      
+      
+### Shape file##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+geo3$ID <- as.character(geo3$GEOID_Tract)
+
+merged_data <- tracts %>%
+  left_join(geo3, by = "ID")
+
+
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = EVERrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "cividis", name = "Ever Smoking/100,000", limits=c(0,1000)) +  # Gradient color scale
+#   theme_minimal() +
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "Ever smoking rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+
+merged_data$EVERrate[merged_data$EVERrate > 300] <- 300
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = EVERrate), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "cividis", name = "Rates", limits=c(0,300)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "Ever smoking rates (per 100,000)",
+    subtitle = "Source: MCC-MELD (Numerator) and Census (Denominator)"
+    #caption = "Data Source: MCC-MELD and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )+
+  theme(
+    plot.title = element_text(size = 20),
+    plot.subtitle = element_text(size = 16)  # Change the number to increase/decrease size
+  )
+
+
+
+```
+
+## PM2.5 (not require any MCC data)
+```{r}
+
+pm <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/Archives/Book1.csv")
+pm$fips <- as.character(pm$ctfips)
+dim(pm) # [1] 70498    10 
+length(unique(pm$fips)) # [1] 4901
+
+pm1 <- pm[!duplicated(pm[c("fips")]),]
+
+pm2 <- pm1 %>%
+  group_by(fips) %>%
+  summarize(pm1 = mean(DS_PM_pred, na.rm = TRUE)) %>%
+  ungroup()
+
+pm2$FIPS_tract <- pm2$fips
+
+
+### Plotting ##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+pm2$ID <- as.character(pm2$fips)
+
+merged_data <- tracts %>%
+  left_join(pm2, by = "ID")
+
+summary(merged_data$pm1)
+  #  Min. 1st Qu.  Median    Mean 3rd Qu.    Max.    NA's 
+  # 9.642  10.397  10.572  10.588  10.785  11.228     223 
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = pm1), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "inferno", name = "Range", limits=c(9.6,11.3)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "Averaged PM2.5 in 2015",
+    subtitle = "Source: CDC"
+    #caption = "Data Source: CDC and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )+
+  theme(
+    plot.title = element_text(size = 20),
+    plot.subtitle = element_text(size = 16)  # Change the number to increase/decrease size
+  )
+
+
+```
+
+## ADI by census tract
+```{r}
+
+# https://www.neighborhoodatlas.medicine.wisc.edu/download
+adi <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/Archives/ADI/US_2022_ADI_Census_Block_Group_v4_0_1.csv") 
+# All 2022 latest data. We can decide what to use later.
+
+adi$FIPS <- as.factor(adi$FIPS)
+head(adi)
+#           GISJOIN        FIPS ADI_NATRANK ADI_STATERNK
+# 1 G01000100201001 10010201001          76            5
+# 2 G01000100201002 10010201002          74            5
+# 3 G01000100202001 10010202001          82            6
+# 4 G01000100202002 10010202002          82            6
+# 5 G01000100203001 10010203001          71            4
+# 6 G01000100203002 10010203002          88            7
+
+table(adi$ADI_NATRANK, useNA="always")
+
+# Suppression Codes:
+# 		GQ (Group Quarters) - Greater than 33.3% of Housing Units are Group Quarters
+# 		PH (Population/Housing) - Population less than 100 and/or fewer than 30 housing units
+# 		GQ-PH (Group Quarters and Population Housing) - Both GQ and PH conditions are met 
+#     QDI (Questionable Data Integrity) - Block Groups missing a key demographic factor for ADI construction (supressed or missing in the ACS data)
+
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "GQ"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "GQ-PH"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "PH"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "QDI"] <- NA
+
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "GQ"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "GQ-PH"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "PH"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "QDI"] <- NA
+
+
+
+geo <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/1_AreaData_20250212.csv")
+geo2 <- merge(small, geo, by = "pat_id");  
+
+#head(geo2)
+geo2$ADI_NATRANK <- as.numeric(geo2$ADI_NATRANK)
+geo2$ADI_STATERNK <- as.numeric(geo2$ADI_STATERNK)
+
+
+
+# Convert GEOID to character type for consistency
+tracts$GEOID <- as.character(tracts$GEOID)
+geo2$GEOID <- as.character(geo2$GEOID)
+
+merged_data <- tracts %>%
+  left_join(geo2, by = "GEOID")
+ 
+#merged_data$ADI_STATERNK <- as.factor(as.character(merged_data$ADI_STATERNK))
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = ADI_STATERNK), color = NA) +  # Use 'income' for the fill gradient
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  scale_fill_viridis_c(option = "plasma", name = "ADI rank") +  # Gradient color scale
+  theme_minimal() +
+  labs(
+    title = "ADI (1: Least vs. 10: Most Deprived)",
+    subtitle = "Source: Neighborhood Atlas"
+    #caption = "Data Source: MCC-MELD, Neighborhood Atlas, and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )+
+  theme(
+    plot.title = element_text(size = 20),
+    plot.subtitle = element_text(size = 16)  # Change the number to increase/decrease size
+  )
+
+
+```
+
+## Foreign born by census tract
+```{r}
+
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = Prop.ForeignBorn), color = NA) +  # Use 'income' for the fill gradient
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  scale_fill_viridis_c(option = "plasma", name = "Foreign Born (%)", limits=c(0,1)) +  # Gradient color scale
+  theme_minimal() +
+  labs(
+    title = "Prop (%) Foreign Born",
+    subtitle = "Source: American Community Survey"
+    #caption = "Data Source: MCC-MELD and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )+
+  theme(
+    plot.title = element_text(size = 20),
+    plot.subtitle = element_text(size = 16)  # Change the number to increase/decrease size
+  )
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+# Geospatial mapping; Hot spot
+## Our patient pop (total LC) divided by Census Track Pop, i.e., LC rates/100,000
+```{r}
+
+geo <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/1_AreaData_20250212.csv")
+geo2 <- merge(small, geo, by = "pat_id");  
+
+geo2$lat <- as.numeric(as.character(geo2$lat))
+geo2$long <- as.numeric(as.character(geo2$long))
+geo2$county <- (as.character(geo2$county))
+geo2$county <- ifelse(nchar(geo2$county) == 2, paste0("0", geo2$county), geo2$county )
+
+geo2$FIPS_blockg <- ifelse(nchar(geo2$FIPS ) == 11, paste0("0", geo2$FIPS ), geo2$FIPS )  # Block group (12 digits)
+geo2$FIPS_tract <- ifelse(nchar(geo2$GEOID ) == 10, paste0("0", geo2$GEOID ), geo2$GEOID ) # Census tract (11 digits)
+geo2$FIPS_county <- substr(geo2$GEOID, 1, 9)
+
+
+
+# Maps
+nyc_counties <- c("061", "047", "081")  # NYC FIPS codes, MCC catchment areas; Manhattan, Queens, Brooklyn
+nyc_map <- map_data("county") %>% filter(region == "new york" & subregion %in% c("new york", "kings", "queens"))
+tracts <- tigris::tracts(state = "NY", county= c("061", "081", "047"), cb = TRUE, year = 2023)
+counties <- tigris::counties(state = "NY", cb = TRUE, year = 2023) %>% filter(COUNTYFP %in% c("061", "081", "047"))  # Filter for NYC counties
+
+points1 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL == "Positive") # EGFR positive patient points
+points2 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL != "Positive") # EGFR negative patient points
+
+########################################################
+
+      ##### Total count of our MCC-MELD patients
+      a <- table(geo2$FIPS_tract)
+      b <- data.frame(a)
+      colnames(b) <- c("GEOID_Tract", "Current_Count")
+      c <- b
+      c$GEOID_Tract <- as.character(c$GEOID_Tract)
+
+      ##### Get population count from Census survey 
+      pop_data <- get_decennial(
+        geography = "tract",
+        variables = "P1_001N",
+        state = "NY",          # Change to your state
+        county = c("061", "047", "081"),   
+        year = 2020,
+        sumfile = "pl"
+      )      
+      
+      pop <- data.frame(pop_data)
+      pop1 <- pop[c(1, 4)]
+      colnames(pop1) <- c("GEOID_Tract", "Pop")
+      
+      pop2 <- merge(c, pop1, by = "GEOID_Tract", all.y=T); dim(c); dim(pop1); dim(pop2)
+      # [1] 2883    2
+      # [1] 1840    2
+      # [1] 1490    3      
+      
+      pop2$LCrate <- round(pop2$Current_Count/pop2$Pop * 100000,1) # if pop < 1000, we didn't estimate
+      pop2$LCrate[pop2$Pop < 1000] <- 0 # I also tried NA, but it looks a bit confusing
+      pop2$LCrate[is.na(pop2$LCrate)] <- 0
+      
+      summary(pop2$LCrate) # per 100,000
+       # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+       # 0.00   27.10   68.00   93.03  136.05  950.00 
+      
+      geo3 <- pop2
+
+      
+      
+### Shape file##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+geo3$ID <- as.character(geo3$GEOID_Tract)
+
+merged_data <- tracts %>%
+  left_join(geo3, by = "ID")
+
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "rocket", name = "LC rate/100,000", limits=c(0,1000)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "LC rates (per 100,000) by Census tract",
+    subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+    caption = "Data Source: MCC-MELD and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "rocket", name = "LC rate/100,000", limits=c(0,500)) +  # Gradient color scale
+#   theme_minimal() +
+#   # geom_point(data = points2, aes(x = long, y = lat), color = "red", size = 0.08, alpha = 0.7) +  
+#   # geom_point(data = points1, aes(x = long, y = lat), color = "green", size = 0.2, alpha = 0.7) +  
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "LC rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+
+
+```
+
+## Our patient pop (EGFR LC) divided by Census Track Pop
+```{r}
+
+points1 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL == "Positive") # EGFR positive patient points
+points2 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL != "Positive") # EGFR negative patient points
+
+########################################################
+
+      ##### Total count of our MCC-MELD patients
+      geo2$egfrp <- ifelse(geo2$EGFR_structure == "Positive" , 1, 0)
+  
+      dat <- subset(geo2, egfrp==1)
+      ##### Total count of our MCC-MELD patients
+      a <- table(dat$FIPS_tract)
+      b <- data.frame(a)
+      colnames(b) <- c("GEOID_Tract", "Current_Count")
+      c <- b
+      c$GEOID_Tract <- as.character(c$GEOID_Tract)
+
+
+      ##### Get population count from Census survey
+      pop_data <- get_decennial(
+        geography = "tract",
+        variables = "P1_001N",
+        state = "NY",          # Change to your state
+        county = c("061", "047", "081"),
+        year = 2020,
+        sumfile = "pl"
+      )
+
+      pop <- data.frame(pop_data)
+      pop1 <- pop[c(1, 4)]
+      colnames(pop1) <- c("GEOID_Tract", "Pop")
+      
+      pop2 <- merge(c, pop1, by = "GEOID_Tract", all.y=T); dim(c); dim(pop1); dim(pop2)
+      # [1] 2883    2
+      # [1] 1840    2
+      # [1] 1490    3      
+      
+      pop2$LCrate <- round(pop2$Current_Count/pop2$Pop * 100000,1) # if pop < 1000, we didn't estimate
+      pop2$LCrate[pop2$Pop < 1000] <- 0
+      pop2$LCrate[is.na(pop2$LCrate)] <- 0
+      
+  summary(pop2$LCrate) # per 100,000 <--- EGFR LC rate
+   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   # 0.00    0.00    0.00    5.76    0.00  133.20       
+
+       # summary(pop2$LCrate) # per 100,000 <-- TOtal LC rate
+       # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+       # 0.00   27.10   68.00   93.03  136.05  950.00 
+      
+      
+      
+      
+      geo3 <- pop2
+
+      
+      
+### Shape file##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+geo3$ID <- as.character(geo3$GEOID_Tract)
+
+merged_data <- tracts %>%
+  left_join(geo3, by = "ID")
+
+merged_data$LCrate[merged_data$LCrate > 50] <- 50
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "plasma", name = "Range", limits=c(0,50)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "EGFRm LC rates (per 100,000) in MCC Catchment Areas",
+    subtitle = "Data Source: MCC-MELD (numerator) and Census Bureau (denominator)",
+    #caption = "Data Source: MCC-MELD (numerator) and Census Bureau (denominator)"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+# 
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "mako", name = "EGFRm LC rate/100,000", limits=c(0,100)) +  # Gradient color scale
+#   #geom_point(data = points1, aes(x = long, y = lat), color = "green", size = 0.05, alpha = 0.7) +  
+#   theme_minimal() +
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "EGFRm LC rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+
+
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "mako", name = "EGFRm LC rate/100,000", limits=c(0,200)) +  # Gradient color scale
+#   geom_point(data = points1, aes(x = long, y = lat), color = "orange", size = 0.03, alpha = 0.7) +  
+#   theme_minimal() +
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "EGFRm LC rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+
+```
+
+## Our patient pop (Non-EGFR LC) divided by Census Track Pop
+```{r}
+
+
+      ##### Total count of our MCC-MELD patients
+      geo2$egfrp <- ifelse(geo2$EGFR_structure == "Positive" , 0, 1)
+  
+      dat <- subset(geo2, egfrp==1)
+      ##### Total count of our MCC-MELD patients
+      a <- table(dat$FIPS_tract)
+      b <- data.frame(a)
+      colnames(b) <- c("GEOID_Tract", "Current_Count")
+      c <- b
+      c$GEOID_Tract <- as.character(c$GEOID_Tract)
+
+
+      ##### Get population count from Census survey
+      pop_data <- get_decennial(
+        geography = "tract",
+        variables = "P1_001N",
+        state = "NY",          # Change to your state
+        county = c("061", "047", "081"),
+        year = 2020,
+        sumfile = "pl"
+      )
+
+      pop <- data.frame(pop_data)
+      pop1 <- pop[c(1, 4)]
+      colnames(pop1) <- c("GEOID_Tract", "Pop")
+      
+      pop2 <- merge(c, pop1, by = "GEOID_Tract", all.y=T); dim(c); dim(pop1); dim(pop2)
+      # [1] 2883    2
+      # [1] 1840    2
+      # [1] 1490    3      
+      
+      pop2$LCrate <- round(pop2$Current_Count/pop2$Pop * 100000,1) # if pop < 1000, we didn't estimate
+      pop2$LCrate[pop2$Pop < 1000] <- 0
+      pop2$LCrate[is.na(pop2$LCrate)] <- 0
+      
+  summary(pop2$LCrate) # per 100,000 <--- EGFR LC rate
+   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   # 0.00    0.00    0.00    5.76    0.00  133.20       
+
+       # summary(pop2$LCrate) # per 100,000 <-- TOtal LC rate
+       # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+       # 0.00   27.10   68.00   93.03  136.05  950.00 
+      
+      
+      
+      
+      geo3 <- pop2
+
+      
+      
+### Shape file##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+geo3$ID <- as.character(geo3$GEOID_Tract)
+
+merged_data <- tracts %>%
+  left_join(geo3, by = "ID")
+
+merged_data$LCrate[merged_data$LCrate > 500] <- 500
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = LCrate), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "plasma", name = "Range", limits=c(0,500)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "Rates of LC without EGFR mutation (per 100,000) in MCC Catchment Areas",
+    subtitle = "Data Source: MCC-MELD (numerator) and Census Bureau (denominator)",
+    #caption = "Data Source: MCC-MELD and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+```
+
+## Our patient pop (Asian proportion)
+```{r}
+
+
+      ##### Number of ever smokers in MCC-MELD
+      geo2$ever <- ifelse(geo2$Race == "Asian" , 1, 0)
+  
+      dat <- subset(geo2, ever==1)
+      ##### Total count of our MCC-MELD patients
+      a <- table(dat$FIPS_tract)
+      b <- data.frame(a)
+      colnames(b) <- c("GEOID_Tract", "Current_Count")
+      c <- b
+      c$GEOID_Tract <- as.character(c$GEOID_Tract)
+
+
+      ##### Get population count from Census survey
+      pop_data <- get_decennial(
+        geography = "tract",
+        variables = "P1_001N",
+        state = "NY",          # Change to your state
+        county = c("061", "047", "081"),
+        year = 2020,
+        sumfile = "pl"
+      )
+
+      pop <- data.frame(pop_data)
+      pop1 <- pop[c(1, 4)]
+      colnames(pop1) <- c("GEOID_Tract", "Pop")
+      
+      pop2 <- merge(c, pop1, by = "GEOID_Tract", all.y=T); dim(c); dim(pop1); dim(pop2)
+      # [1] 2883    2
+      # [1] 1840    2
+      # [1] 1490    3      
+      
+      pop2$EVERrate <- round(pop2$Current_Count/pop2$Pop * 100000,1) # if pop < 1000, we didn't estimate
+      pop2$EVERrate[pop2$Pop < 1000] <- 0
+      pop2$EVERrate[is.na(pop2$EVERrate)] <- 0
+      
+  summary(pop2$EVERrate) # per 100,000 <--- EGFR LC rate
+     # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+     # 0.00   27.10   68.00   93.03  136.05  950.00 
+      
+      
+      
+      
+      geo3 <- pop2
+
+      
+      
+### Shape file##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+geo3$ID <- as.character(geo3$GEOID_Tract)
+
+merged_data <- tracts %>%
+  left_join(geo3, by = "ID")
+
+
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = EVERrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "cividis", name = "Ever Smoking/100,000", limits=c(0,1000)) +  # Gradient color scale
+#   theme_minimal() +
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "Ever smoking rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = EVERrate), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "cividis", name = "Range", limits=c(0,500)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "Prevalence of Asian patients (per 100,000) in MCC Catchment Areas",
+    subtitle = "Data Source: MCC-MELD (numerator) and Census Bureau (denominator)",
+    #caption = "Data Source: MCC-MELD and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+
+```
+
+
+```{r, include=F}
+
+## Our patient pop (Smoking rate w/wo EGFR dots)
+
+
+#       ##### Number of ever smokers in MCC-MELD
+#       geo2$ever <- ifelse(geo2$smkstat1 == "Negative" , 0, 1)
+#   
+#       dat <- subset(geo2, ever==1)
+#       ##### Total count of our MCC-MELD patients
+#       a <- table(dat$FIPS_tract)
+#       b <- data.frame(a)
+#       colnames(b) <- c("GEOID_Tract", "Current_Count")
+#       c <- b
+#       c$GEOID_Tract <- as.character(c$GEOID_Tract)
+# 
+# 
+#       ##### Get population count from Census survey
+#       pop_data <- get_decennial(
+#         geography = "tract",
+#         variables = "P1_001N",
+#         state = "NY",          # Change to your state
+#         county = c("061", "047", "081"),
+#         year = 2020,
+#         sumfile = "pl"
+#       )
+# 
+#       pop <- data.frame(pop_data)
+#       pop1 <- pop[c(1, 4)]
+#       colnames(pop1) <- c("GEOID_Tract", "Pop")
+#       
+#       pop2 <- merge(c, pop1, by = "GEOID_Tract", all.y=T); dim(c); dim(pop1); dim(pop2)
+#       # [1] 2883    2
+#       # [1] 1840    2
+#       # [1] 1490    3      
+#       
+#       pop2$EVERrate <- round(pop2$Current_Count/pop2$Pop * 100000,1) # if pop < 1000, we didn't estimate
+#       pop2$EVERrate[pop2$Pop < 1000] <- 0
+#       pop2$EVERrate[is.na(pop2$EVERrate)] <- 0
+#       
+#   summary(pop2$EVERrate) # per 100,000 <--- EGFR LC rate
+#      # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#      # 0.00   27.10   68.00   93.03  136.05  950.00 
+#       
+#       
+#       
+#       
+#       geo3 <- pop2
+# 
+#       
+#       
+# ### Shape file##### 
+# tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+# tracts$ID <- as.character(tracts$GEOID)
+# geo3$ID <- as.character(geo3$GEOID_Tract)
+# 
+# merged_data <- tracts %>%
+#   left_join(geo3, by = "ID")
+# 
+# 
+# # ggplot(data = merged_data) +
+# #   geom_sf(aes(fill = EVERrate), color = NA) +  # Use 'income' for the fill gradient
+# #   scale_fill_viridis_c(option = "cividis", name = "Ever Smoking/100,000", limits=c(0,1000)) +  # Gradient color scale
+# #   theme_minimal() +
+# #   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+# #   labs(
+# #     title = "Ever smoking rates (per 100,000) by Census tract",
+# #     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+# #     caption = "Data Source: MCC-MELD and Census Bureau"
+# #   ) +
+# #   theme(
+# #     plot.title = element_text(hjust = 0.5),
+# #     plot.subtitle = element_text(hjust = 0.5)
+# #   )
+# 
+# 
+# 
+# ggplot(data = merged_data) +
+#   geom_sf(aes(fill = EVERrate), color = NA) +  # Use 'income' for the fill gradient
+#   scale_fill_viridis_c(option = "cividis", name = "Smoking/100,000", limits=c(0,500)) +  # Gradient color scale
+#   theme_minimal() +
+#   geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+#   labs(
+#     title = "Ever smoking rates (per 100,000) by Census tract",
+#     subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+#     caption = "Data Source: MCC-MELD and Census Bureau"
+#   ) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5)
+#   )
+
+
+
+```
+
+## PM2.5 (not require any MCC data)
+```{r}
+
+pm <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/Archives/Book1.csv")
+pm$fips <- as.character(pm$ctfips)
+dim(pm) # [1] 70498    10 
+length(unique(pm$fips)) # [1] 4901
+
+pm1 <- pm[!duplicated(pm[c("fips")]),]
+
+pm2 <- pm1 %>%
+  group_by(fips) %>%
+  summarize(pm1 = mean(DS_PM_pred, na.rm = TRUE)) %>%
+  ungroup()
+
+pm2$FIPS_tract <- pm2$fips
+
+
+### Plotting ##### 
+tracts <- tigris::tracts(state = "NY", county= c( "061", "081","047"), cb = TRUE, year = 2023)
+tracts$ID <- as.character(tracts$GEOID)
+pm2$ID <- as.character(pm2$fips)
+
+merged_data <- tracts %>%
+  left_join(pm2, by = "ID")
+
+summary(merged_data$pm1)
+  #  Min. 1st Qu.  Median    Mean 3rd Qu.    Max.    NA's 
+  # 9.642  10.397  10.572  10.588  10.785  11.228     223 
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = pm1), color = NA) +  # Use 'income' for the fill gradient
+  scale_fill_viridis_c(option = "inferno", name = "PM2.5 in 2016", limits=c(9.6,11.3)) +  # Gradient color scale
+  theme_minimal() +
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  labs(
+    title = "Daily Average PM2.5 by Census tract",
+    subtitle = "MCC Catchment Areas: Manhattan, Queens, and Brooklyn",
+    caption = "Data Source: CDC and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+```
+
+## ADI by census tract
+```{r}
+
+# https://www.neighborhoodatlas.medicine.wisc.edu/download
+adi <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/Archives/ADI/US_2022_ADI_Census_Block_Group_v4_0_1.csv") 
+# All 2022 latest data. We can decide what to use later.
+
+adi$FIPS <- as.factor(adi$FIPS)
+head(adi)
+#           GISJOIN        FIPS ADI_NATRANK ADI_STATERNK
+# 1 G01000100201001 10010201001          76            5
+# 2 G01000100201002 10010201002          74            5
+# 3 G01000100202001 10010202001          82            6
+# 4 G01000100202002 10010202002          82            6
+# 5 G01000100203001 10010203001          71            4
+# 6 G01000100203002 10010203002          88            7
+
+table(adi$ADI_NATRANK, useNA="always")
+
+# Suppression Codes:
+# 		GQ (Group Quarters) - Greater than 33.3% of Housing Units are Group Quarters
+# 		PH (Population/Housing) - Population less than 100 and/or fewer than 30 housing units
+# 		GQ-PH (Group Quarters and Population Housing) - Both GQ and PH conditions are met 
+#     QDI (Questionable Data Integrity) - Block Groups missing a key demographic factor for ADI construction (supressed or missing in the ACS data)
+
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "GQ"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "GQ-PH"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "PH"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "QDI"] <- NA
+
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "GQ"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "GQ-PH"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "PH"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "QDI"] <- NA
+
+
+
+geo <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/1_AreaData_20250212.csv")
+geo2 <- merge(small, geo, by = "pat_id");  
+
+#head(geo2)
+geo2$ADI_NATRANK <- as.numeric(geo2$ADI_NATRANK)
+geo2$ADI_STATERNK <- as.numeric(geo2$ADI_STATERNK)
+
+
+
+# Convert GEOID to character type for consistency
+tracts$GEOID <- as.character(tracts$GEOID)
+geo2$GEOID <- as.character(geo2$GEOID)
+
+merged_data <- tracts %>%
+  left_join(geo2, by = "GEOID")
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = ADI_STATERNK), color = NA) +  # Use 'income' for the fill gradient
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  scale_fill_viridis_c(option = "plasma", name = "State ADI") +  # Gradient color scale
+  theme_minimal() +
+  labs(
+    title = "ADI Gradient by Census Tract (10: Most Deprived)",
+    subtitle = "Data Source: Neighborhood Atlas, and Census Bureau"
+    #caption = "Data Source: MCC-MELD, Neighborhood Atlas, and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+```
+
+## Foreign born by census tract
+```{r}
+
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = Prop.ForeignBorn), color = NA) +  # Use 'income' for the fill gradient
+  geom_sf(data = counties, fill = NA, color = "black", size = 10) +
+  scale_fill_viridis_c(option = "plasma", name = "Foreign Born (%)", limits=c(0,1)) +  # Gradient color scale
+  theme_minimal() +
+  labs(
+    title = "Prop (%) Foreign Born",
+    subtitle = "Data Source: Census Bureau"
+    #caption = "Data Source: MCC-MELD and Census Bureau"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+```
+
+
+
+
+
