@@ -1,0 +1,1307 @@
+---
+title: "1_Manuscript_AllResults"
+author: "Luchang"
+date: "2025-08-11"
+output: html_document
+---
+
+```{r, include=F}
+library(tidyr)
+library(tidycensus)
+library(Gmisc)
+library(dplyr)
+library(ggplot2)
+library(gt)
+library(ggmap)
+library(zipcodeR)
+library(gtsummary)
+library(lubridate)
+library(openxlsx)
+library(stringr)
+library(readxl)
+library(maps)
+library(sf)
+library(tigris)
+library(viridis)
+library(scales) 
+library(tidycensus)  
+```
+
+
+# Dataset
+```{r}
+
+small <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Study cohort folder/MCC_MELD_studycohort_20250129.csv")
+
+# smoking final
+smoking <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/4_NLP_Smoking_baseline_20250322.csv")
+
+# egfr final
+egfr <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/Cohort_EGFR_FINAL.csv")
+
+# Prior history of cancer
+ph <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/2_CancerHistories_20250212.csv")
+
+# COPD, pulmonary nodule
+copd <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/3_Comorbidities_baseline_COPD_PN_20250212.csv")
+
+
+
+
+dim(small); length(unique(small$pat_id))
+dim(smoking); length(unique(smoking$pat_id))
+dim(egfr); length(unique(egfr$pat_id))
+
+# > dim(small); length(unique(small$pat_id))
+# [1] 9573   66
+# [1] 9573
+# > dim(smoking); length(unique(smoking$pat_id))
+# [1] 9573   19
+# [1] 9573
+# > dim(egfr); length(unique(egfr$pat_id))
+# [1] 9646    2
+# [1] 9646
+
+small <- merge(small, smoking, by = "pat_id")
+small <- merge(small, egfr, by = "pat_id", all.x=T); dim(small); length(unique(small$pat_id))
+# [1] 9573   85
+# [1] 9573
+
+
+ph <- subset(ph, MP.status == "prior")
+dim(ph); length(unique(ph$pat_id))
+# [1] 402  11
+# [1] 363
+
+ph <- ph[order(ph$pat_id, ph$date.MP),]
+ph1 <- ph[!duplicated(ph[c("pat_id")]),]; dim(ph1)
+
+small <- merge(small, ph1, by = "pat_id", all.x=T); dim(small)
+small$ph <- ifelse(small$MP.status == "prior", 1, 0)
+small$ph[is.na(small$ph)] <- 0 
+
+dim(copd); length(unique(copd$pat_id))
+
+small <- merge(small, copd, by = "pat_id")
+
+```
+# Table 1
+```{r}
+
+small$event.death <- as.factor(as.character(small$event.death))
+small$chemo.ix <- as.factor(as.character(small$chemo.ix))
+small$surgery.ix <- as.factor(as.character(small$surgery.ix))
+small$radio.ix <- as.factor(as.character(small$radio.ix))
+
+
+small$ph <- as.factor(as.character(small$ph))
+small$COPD <- as.factor(as.character(small$COPD))
+small$PN <- as.factor(as.character(small$PN))
+
+small$Gender[ small$Gender == "Other (intersex, DSD)"] <- "Female"
+small$Gender[ small$Gender == "Unknown"] <- "Female"
+
+small$EGFRt <- ifelse(small$EGFR_FINAL == "Positive", "1_Positive",
+               ifelse(small$EGFR_FINAL == "Unknown", "3_Unknown", "2_Negative/VUS"))
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Race,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["Gender"]] <- getT1Stat("Gender")
+table_data[["Age at dx"]] <- getT1Stat("Age_dx")
+table_data[["Hospital.Location"]] <- getT1Stat("Hospital.Location")
+table_data[["event.death"]] <- getT1Stat("event.death")
+table_data[["seer.stage"]] <- getT1Stat("seer.stage")
+table_data[["ajcc.stage"]] <- getT1Stat("ajcc.stage")
+table_data[["hist.ix"]] <- getT1Stat("hist.ix")
+
+table_data[["chemo.ix"]] <- getT1Stat("chemo.ix")
+table_data[["radio.ix"]] <- getT1Stat("radio.ix")
+table_data[["surgery.ix"]] <- getT1Stat("surgery.ix")
+
+table_data[["EGFR_Structure"]] <- getT1Stat("EGFR_structure")
+table_data[["EGFR_Final"]] <- getT1Stat("EGFR_FINAL")
+table_data[["EGFR targetable mutation"]] <- getT1Stat("EGFRt")
+table_data[["Smoking status"]] <- getT1Stat("smkstat1")
+table_data[["Smoking duration"]] <- getT1Stat("dur1")
+table_data[["Smoking pack-years"]] <- getT1Stat("py1")
+table_data[["Marital status"]] <- getT1Stat("marry.epic")
+table_data[["FH Lung"]] <- getT1Stat("FH_lung")
+table_data[["Prior history of cancer"]] <- getT1Stat("ph")
+table_data[["COPD"]] <- getT1Stat("COPD")
+table_data[["Pulmonary Nodule"]] <- getT1Stat("PN")
+```
+
+```{r}
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+
+htmlTable::htmlTable(
+  output_data,
+  align = "rrrr",
+  rgroup = rgroup,
+  n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Table 1. Baseline characteristics of MCC-LCD by race and Hispanic origin (1988–2024)",
+  ctable = TRUE,
+  sanitize.text.function = function(x) gsub("%", "", x)
+)
+
+```
+
+## EGFR by year
+```{r}
+
+table(small$yr.dx, small$EGFRt, useNA="always")
+
+library(gmodels)
+CrossTable(small$yr.dx,small$EGFRt, prop.t=F, prop.c=F, prop.chisq = F)
+
+small$EGFR_testing <- ifelse(small$EGFRt == "3_Unknown", 0, 1)
+CrossTable(small$yr.dx,small$EGFR_testing, prop.t=F, prop.c=F, prop.chisq = F)
+
+summary_df <- small %>%
+  group_by(yr.dx) %>%
+  summarise(
+    proportion = mean(EGFR_testing),
+    count = n()
+  )
+
+summary_df <- data.frame(summary_df)
+summary_df1 <- subset(summary_df, yr.dx >= 2003)
+
+# Create line plot
+ggplot(summary_df1, aes(x = yr.dx, y = proportion)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(color = "steelblue", size = 2) + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits=c(0,1)) +
+  labs(
+   # title = "Known EGFR status (out of total cases) by year of lung cancer diagnosis",
+    x = "Year of lung cancer diagnosis",
+    y = "Proportion of Known EGFR status (out of total lung cancer)"
+  ) +
+  theme_minimal()
+
+```
+
+# Figure 3
+```{r}
+
+small$ysq1[ is.na(small$ysq1) ] <- 9999
+
+small$smkstat2 <- ifelse(small$smkstat1 == "Never", "1_Never",
+                  ifelse(small$smkstat1 == "Former" & small$ysq1 > 15 & small$ysq1 != 9999, "2_LongQuit", 
+                  ifelse(small$smkstat1 == "Former", "3_RecentQuit",
+                  ifelse(small$smkstat1 == "Current", "4_Current", "5_Unknown"))))
+
+table(small$smkstat2, useNA="always")
+     # 1_Never   2_LongQuit 3_RecentQuit    4_Current    5_Unknown         <NA> 
+     #    1565         1566         3221         1214         2007            0 
+
+table(small$smkstat2, small$EGFRt)
+    #              1_Positive 2_Negative/VUS 3_Unknown
+    # 1_Never             521            371       673
+    # 2_LongQuit          210            584       772
+    # 3_RecentQuit        246           1110      1865
+    # 4_Current            84            290       840
+    # 5_Unknown            31             41      1935
+
+small$EGFRt1 <- ifelse(small$EGFRt == "1_Positive", 1, 0)
+small$EGFRt1 <- as.factor(as.character(small$EGFRt1))
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Gender,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Sex",
+  ctable = TRUE )
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$smkstat2,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by SMK",
+  ctable = TRUE )
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Race,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Race",
+  ctable = TRUE )
+
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Hospital.Location,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Hospital",
+  ctable = TRUE )
+
+
+
+```
+
+## Figure 3 (after excluding 'unknown' EGFR)
+```{r}
+
+small1 <- subset(small, EGFR_FINAL != "Unknown")
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small1[, varname],
+                        small1$Gender,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Sex",
+  ctable = TRUE )
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small1[, varname],
+                        small1$smkstat2,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by SMK",
+  ctable = TRUE )
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small1[, varname],
+                        small1$Race,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Race",
+  ctable = TRUE )
+
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small1[, varname],
+                        small1$Hospital.Location,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt1")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Hospital",
+  ctable = TRUE )
+
+
+```
+
+# Figure 3
+```{r}
+
+small$EGFRt2 <- ifelse(small$EGFR_structure == "Positive", 1, 0)
+small$EGFRt2 <- as.factor(as.character(small$EGFRt2))
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Gender,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt2")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Sex",
+  ctable = TRUE )
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$smkstat2,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt2")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by SMK",
+  ctable = TRUE )
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Race,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt2")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Race",
+  ctable = TRUE )
+
+
+
+
+getT1Stat <- function(varname, digits=1){
+  getDescriptionStatsBy(small[, varname],
+                        small$Hospital.Location,
+                        add_total_col=TRUE,
+                        show_all_values=TRUE,
+                        hrzl_prop=FALSE,
+                        statistics=TRUE,
+                        html=TRUE,
+                        digits=digits,
+                        header_count = TRUE
+                       )
+}
+ 
+table_data <- list()
+
+# Get the basic stats
+table_data[["EGFR Status"]] <- getT1Stat("EGFRt2")
+
+rgroup <- c()
+n.rgroup <- c()
+output_data <- NULL
+for (varlabel in names(table_data)) {
+  output_data <- rbind(
+    output_data,
+    table_data[[varlabel]]
+  )
+  rgroup <- c(
+    rgroup,
+    varlabel
+  )
+  n.rgroup <- c(
+    n.rgroup,
+    nrow(table_data[[varlabel]])
+  )
+}
+
+htmlTable(output_data,
+  align = "rrrr",
+  rgroup = rgroup, n.rgroup = n.rgroup,
+  rgroupCSSseparator = "",
+  rowlabel = "",
+  caption = "Figure 3 Sources by Hospital",
+  ctable = TRUE )
+
+
+
+```
+
+
+
+
+
+# Figure 4 (With 6 maps)
+## Hotspot
+```{r}
+register_google(key = "AIzaSyCS-4Jla3NOXJhkBvEil5hy_NKRlpmAFfw")
+geo <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/1_AreaData_20250212.csv")
+geo2 <- merge(small, geo, by = "pat_id");  
+
+geo2$lat <- as.numeric(as.character(geo2$lat))
+geo2$long <- as.numeric(as.character(geo2$long))
+geo2$county <- (as.character(geo2$county))
+geo2$county <- ifelse(nchar(geo2$county) == 2, paste0("0", geo2$county), geo2$county )
+
+geo2$FIPS_blockg <- ifelse(nchar(geo2$FIPS ) == 11, paste0("0", geo2$FIPS ), geo2$FIPS )  # Block group (12 digits)
+geo2$FIPS_tract <- ifelse(nchar(geo2$GEOID ) == 10, paste0("0", geo2$GEOID ), geo2$GEOID ) # Census tract (11 digits)
+geo2$FIPS_county <- substr(geo2$GEOID, 1, 9)
+
+nyc_counties <- c("061", "047", "081") # NYC FIPS codes, MCC catchment areas; Manhattan, Queens, Brooklyn 
+
+nyc_map <- map_data("county") %>% filter(region == "new york" & subregion %in% c("new york", "kings", "queens")) 
+
+tracts <- tigris::tracts(state = "NY", county= c("061", "081", "047"), cb = TRUE, year = 2023) 
+
+counties <- tigris::counties(state = "NY", cb = TRUE, year = 2023) %>% filter(COUNTYFP %in% c("061", "081", "047")) # Filter for NYC counties
+
+options(tigris_use_cache = TRUE)
+
+
+pts <- geo2 %>%
+  filter(!is.na(lat), !is.na(long)) %>%
+  rename(lon = long) %>%
+  select(pat_id, lon, lat, everything())
+pts <- pts %>% rename(GEOID_src = GEOID)
+pts_sf <- st_as_sf(pts, coords = c("lon", "lat"), crs = 4326)
+
+
+tracts_ll   <- st_transform(tracts, 4326)
+counties_ll <- st_transform(counties, 4326)
+
+
+tracts_core <- tracts_ll %>% select(GEOID)
+pts_joined  <- st_join(pts_sf, tracts_core, join = st_within, left = FALSE)
+
+lc_by_tract <- pts_joined %>%
+  st_drop_geometry() %>%
+  count(GEOID, name = "lc_count")
+
+
+nyc_counties_fips <- c("061", "081", "047")
+
+tract_pop <- get_acs(
+  geography = "tract",
+  variables = c(pop = "B01001_001"),
+  year = 2023,           
+  state = "NY",
+  county = nyc_counties_fips,
+  survey = "acs5",
+  geometry = FALSE
+) %>%
+  select(GEOID, pop = estimate)
+
+
+tracts_lc <- tracts_ll %>%
+  left_join(lc_by_tract, by = "GEOID") %>%
+  left_join(tract_pop,     by = "GEOID") %>%
+  mutate(
+    lc_count  = coalesce(lc_count, 0L),
+    pop       = as.numeric(pop),
+    pop_ok    = !is.na(pop) & pop > 0,
+    rate_100k_raw = if_else(pop_ok, (lc_count / pop) * 1e5, NA_real_),
+   
+    rate_100k = pmin(rate_100k_raw, quantile(rate_100k_raw, 0.99, na.rm = TRUE)),
+ 
+    alpha_val = case_when(!pop_ok ~ 0,
+                          lc_count == 0 ~ 0.15,
+                          TRUE ~ rescale(lc_count, to = c(0.25, 0.8)))
+  )
+
+bb <- st_bbox(counties_ll)
+center_lon <- (bb["xmin"] + bb["xmax"]) / 2
+center_lat <- (bb["ymin"] + bb["ymax"]) / 2
+
+gmap <- get_googlemap(
+  center  = c(lon = center_lon, lat = center_lat),
+  zoom    = 11,
+  maptype = "roadmap",
+  scale   = 2
+)
+
+rate_max <- max(tracts_lc$rate_100k, na.rm = TRUE)
+
+# Plot
+NYC_hotspot <- ggmap(gmap) +
+  geom_sf(data = tracts_lc,
+          aes(fill = rate_100k, alpha = alpha_val),
+          color = NA, inherit.aes = FALSE) +
+  geom_sf(data = counties_ll,
+          fill = NA, color = "black", linewidth = 0.6, inherit.aes = FALSE) +
+  scale_fill_viridis_c(
+    option = "inferno",
+    direction = -1, 
+    name   = "Rates",
+    limits = c(0, rate_max),
+    oob    = scales::squish
+  ) +
+  scale_alpha(range = c(0.25, 0.8), guide = "none") +
+  labs(
+     title = "Lung Cancer rates (per 100,000)",
+    subtitle = "Source: MCC-MELD (Numerator) and Census (Denominator)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.title    = element_blank(),
+    panel.grid    = element_blank(),
+    plot.title    = element_text(hjust = 0.5, size = 18),
+    plot.subtitle = element_text(hjust = 0.5, size = 12)
+  )
+
+NYC_hotspot
+```
+
+
+
+## Our patient pop (EGFR LC w/wo EGFR dots) divided by Census Track Pop
+```{r}
+points1 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL == "Positive") # EGFR positive patient points
+points2 <- subset(geo2, state == "36" & county %in% nyc_counties & EGFR_FINAL != "Positive") # EGFR negative patient points
+
+
+pts_pos_sf <- geo2 %>%
+  filter(state == "36",
+         county %in% nyc_counties,
+         EGFR_FINAL == "Positive") %>%
+  transmute(pat_id,
+            lon = as.numeric(long),
+            lat = as.numeric(lat)) %>%
+  tidyr::drop_na(lon, lat) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+pts_pos_joined <- st_join(pts_pos_sf, tracts_ll %>% select(GEOID),
+                          join = st_within, left = FALSE)
+
+egfrm_by_tract <- pts_pos_joined %>%
+  st_drop_geometry() %>%
+  count(GEOID, name = "EGFRm_count")
+
+
+tracts_egfrm <- tracts_ll %>%
+  left_join(egfrm_by_tract, by = "GEOID") %>%
+  left_join(tract_pop, by = "GEOID") %>%    
+  mutate(
+    EGFRm_count = coalesce(EGFRm_count, 0L),
+    pop         = as.numeric(pop),
+    pop_ok      = !is.na(pop) & pop > 0,
+    rate_100k_raw = if_else(pop_ok, (EGFRm_count / pop) * 1e5, NA_real_),
+  
+    rate_100k = pmin(rate_100k_raw, quantile(rate_100k_raw, 0.99, na.rm = TRUE)),
+    alpha_val = case_when(
+      !pop_ok ~ 0,
+      EGFRm_count == 0 ~ 0.15,
+      TRUE ~ rescale(EGFRm_count, to = c(0.4, 1))
+    )
+  )
+
+# plot
+rate_max <- max(tracts_egfrm$rate_100k, na.rm = TRUE)
+
+EGFRm_LCrates <- ggmap(gmap) +
+  geom_sf(data = tracts_egfrm,
+          aes(fill = rate_100k, alpha = alpha_val),
+          color = NA, inherit.aes = FALSE) +
+  geom_sf(data = counties_ll,
+          fill = NA, color = "black", linewidth = 0.6, inherit.aes = FALSE) +
+  scale_fill_viridis_c(
+    option = "inferno",
+    direction = -1,
+    name = "Rates",
+    limits = c(0, rate_max),
+    oob = squish
+  ) +
+  scale_alpha(range = c(0.25, 1), guide = "none") +
+  labs(
+    title    = "EGFRm Lung Cancer Rates (per 100,000)",
+    subtitle = "Source: MCC-MELD (Numerator) and Census (Denominator)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.title    = element_blank(),
+    panel.grid    = element_blank(),
+    plot.title    = element_text(hjust = 0.5, size = 18),
+    plot.subtitle = element_text(hjust = 0.5, size = 12)
+  )
+
+EGFRm_LCrates
+
+```
+
+
+
+
+
+## Our patient pop (Smoking rate w/wo EGFR dots)
+```{r}
+# Numerator: MCC-MELD ever-smokers (1 = ever, 0 = never)
+geo2$ever <- ifelse(geo2$smkstat1 == "Negative", 0, 1)
+
+nyc_fips <- c("061","047","081")
+
+pts_ever_sf <- geo2 %>%
+  filter(state == "36", county %in% nyc_fips, ever == 1) %>%
+  transmute(lon = as.numeric(long),
+            lat = as.numeric(lat)) %>%
+  tidyr::drop_na(lon, lat) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+pts_ever_joined <- st_join(pts_ever_sf, tracts_ll %>% select(GEOID),
+                           join = st_within, left = FALSE)
+
+ever_by_tract <- pts_ever_joined %>%
+  st_drop_geometry() %>%
+  count(GEOID, name = "ever_count")
+
+tracts_ever <- tracts_ll %>%
+  left_join(ever_by_tract, by = "GEOID") %>%
+  left_join(tract_pop,     by = "GEOID") %>%   
+  mutate(
+    ever_count    = coalesce(ever_count, 0L),
+    pop           = as.numeric(pop),
+    pop_ok        = !is.na(pop) & pop > 0,
+    rate_100k_raw = if_else(pop_ok, (ever_count / pop) * 1e5, NA_real_),
+    rate_100k     = pmin(rate_100k_raw, quantile(rate_100k_raw, 0.99, na.rm = TRUE)),
+    alpha_val     = case_when(
+      !pop_ok ~ 0,
+      ever_count == 0 ~ 0.15,
+      TRUE ~ rescale(ever_count, to = c(0.4, 1))
+    )
+  )
+
+rate_max <- max(tracts_ever$rate_100k, na.rm = TRUE)
+
+Eversmoking_rates <- ggmap(gmap) +
+  geom_sf(data = tracts_ever,
+          aes(fill = rate_100k, alpha = alpha_val),
+          color = NA, inherit.aes = FALSE) +
+  geom_sf(data = counties_ll,
+          fill = NA, color = "black", linewidth = 0.6, inherit.aes = FALSE) +
+  scale_fill_viridis_c(
+    option = "magma",
+    direction = -1,
+    name   = "Rates",
+    limits = c(0, rate_max),
+    oob    = scales::squish
+  ) +
+  scale_alpha(range = c(0.25, 1), guide = "none") +
+  labs(
+    title    = "Ever Smoking Rates (per 100,000)",
+    subtitle = "Source: MCC-MELD (Numerator) and Census (Denominator)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.title    = element_blank(),
+    panel.grid    = element_blank(),
+    plot.title    = element_text(hjust = 0.5, size = 18),
+    plot.subtitle = element_text(hjust = 0.5, size = 12)
+  )
+
+Eversmoking_rates
+
+
+```
+
+## PM2.5 (not require any MCC data)
+```{r}
+counties_ll <- st_transform(counties, 4326)
+tracts_ll   <- st_transform(tracts,   4326)
+
+
+bb <- st_bbox(counties_ll)
+center_lon <- (bb["xmin"] + bb["xmax"]) / 2
+center_lat <- (bb["ymin"] + bb["ymax"]) / 2
+
+gmap <- get_googlemap(
+  center  = c(lon = center_lon, lat = center_lat),  # numeric center, avoids Geocoding API
+  zoom    = 11,                                     # adjust 10–12 to taste
+  maptype = "roadmap",
+  scale   = 2
+)
+
+pm <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/Archives/Book1.csv")
+
+
+pm$fips <- as.character(pm$ctfips)
+dim(pm) # [1] 70498    10 
+length(unique(pm$fips)) # [1] 4901
+
+pm1 <- pm[!duplicated(pm[c("fips")]),]
+
+pm2 <- pm1 %>%
+  group_by(fips) %>%
+  summarize(pm1 = mean(DS_PM_pred, na.rm = TRUE)) %>%
+  ungroup()
+
+pm2$FIPS_tract <- pm2$fips
+tracts$ID <- as.character(tracts$GEOID)
+pm2$ID <- as.character(pm2$fips)
+
+pm_merged <- tracts %>%
+  left_join(pm2, by = "ID")
+
+pm_merged <- pm_merged %>%
+  mutate(
+    alpha_val = ifelse(is.na(pm1), 0, rescale(pm1, to = c(0.1, 1)))
+  )
+
+# Plot
+pm2.5 <- ggmap(gmap) +
+  geom_sf(data = pm_merged,
+          aes(fill = pm1, alpha = alpha_val),
+          color = NA, inherit.aes = FALSE) +
+  scale_alpha(range = c(0.1, 1), guide = "none") +
+  geom_sf(data = counties_ll, fill = NA, color = "black",
+          linewidth = 0.6, inherit.aes = FALSE) +
+  scale_fill_viridis_c(
+    option = "inferno", direction = -1,
+    name = "PM2.5 (µg/m³)",
+    limits = c(9.6, 11.3), oob = scales::squish
+  ) +
+  labs(
+    title = "Averaged PM2.5 in 2015",
+    subtitle = "Source: CDC"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 18),
+    plot.subtitle = element_text(hjust = 0.5, size = 12)
+  )
+pm2.5
+
+
+
+```
+
+
+## Adi
+```{r}
+adi <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/Archives/ADI/US_2022_ADI_Census_Block_Group_v4_0_1.csv") 
+adi$FIPS <- as.factor(adi$FIPS)
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "GQ"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "GQ-PH"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "PH"] <- NA
+adi$ADI_NATRANK[ adi$ADI_NATRANK == "QDI"] <- NA
+
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "GQ"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "GQ-PH"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "PH"] <- NA
+adi$ADI_STATERNK[ adi$ADI_STATERNK == "QDI"] <- NA
+
+
+geo <- read.csv("/Volumes/Shieh-share$/EGFR/cleaned/Risk factors/1_AreaData_20250212.csv")
+geo2 <- merge(small, geo, by = "pat_id");  
+
+# Convert ADI to numeric 
+geo2$ADI_NATRANK <- as.numeric(geo2$ADI_NATRANK)
+geo2$ADI_STATERNK <- as.numeric(geo2$ADI_STATERNK)
+
+# Merge with tracts
+tracts$GEOID <- as.character(tracts$GEOID)
+geo2$GEOID <- as.character(geo2$GEOID)
+
+merged_data <- tracts %>%
+  left_join(geo2, by = "GEOID")
+
+adi_merged <- st_transform(merged_data, 4326)
+
+adi_merged <- adi_merged %>%
+  mutate(
+    alpha_val = ifelse(
+      is.na(ADI_STATERNK), 0,
+      scales::rescale(ADI_STATERNK, to = c(0.08, 0.25)) 
+    )
+  )
+
+adi <- ggmap(gmap) +
+  geom_sf(data = adi_merged,
+          aes(fill = ADI_STATERNK, alpha = alpha_val),
+          color = NA, inherit.aes = FALSE) +
+  geom_sf(data = counties_ll, fill = NA, color = "black",
+          linewidth = 0.5, inherit.aes = FALSE) +
+  scale_fill_viridis_c(option = "plasma", direction = -1,
+                       name = "ADI Rank", limits = c(1,10),
+                       oob = scales::squish,
+                       na.value = scales::alpha("grey90", 0.3)) +
+  scale_alpha(range = c(0, 0.25), guide = "none") +   
+  labs(title = "ADI (1: Least vs. 10: Most Deprived)",
+       subtitle = "Source: Neighborhood Atlas") +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(),
+        panel.grid = element_blank(),
+        plot.title = element_text(hjust = 0.5, size = 18),
+        plot.subtitle = element_text(hjust = 0.5, size = 12))
+adi
+
+```
+
+
+
+
+
+## Foreign born by census tract
+```{r}
+fb_merged <- adi_merged  # must contain Prop.ForeignBorn in [0,1]
+fb_merged <- fb_merged %>%
+  mutate(
+    alpha_val = ifelse(
+      is.na(Prop.ForeignBorn), 0,
+      scales::rescale(Prop.ForeignBorn, to = c(0,0.25), guide = "none")
+    )
+  )
+
+
+ForeignBorn <- ggmap(gmap) +
+  geom_sf(data = fb_merged,
+          aes(fill = Prop.ForeignBorn, alpha = alpha_val),   
+          color = NA, inherit.aes = FALSE) +    
+  geom_sf(data = fb_merged, fill = NA,
+          color = scales::alpha("white", 0.25), linewidth = 0.05,
+          inherit.aes = FALSE) +                                
+  geom_sf(data = counties_ll, fill = NA, color = "black",
+          linewidth = 0.6, inherit.aes = FALSE) +
+  scale_fill_viridis_c(option = "plasma", direction = -1,
+                       name = "Foreign Born (%)",
+                       labels = scales::percent_format(accuracy = 1),
+                       limits = c(0, 1), oob = scales::squish,
+                       na.value = scales::alpha("grey90", 0.6)) +
+  scale_alpha(range = c(0, 0.25), guide = "none") +   
+  labs(title = "Prop (%) Foreign Born",
+       subtitle = "Source: American Community Survey") +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(),
+        panel.grid = element_blank(),
+        plot.title = element_text(hjust = 0.5, size = 18),
+        plot.subtitle = element_text(hjust = 0.5, size = 12))
+ForeignBorn
+
+
+```
+
+
+
+```{r}
+library(cowplot)
+
+p1 <- NYC_hotspot
+p2 <- EGFRm_LCrates
+p3 <- Eversmoking_rates
+p4 <- pm2.5
+p5 <- ForeignBorn
+p6 <- adi
+
+unify_theme <- theme(
+  plot.margin = margin(6, 6, 6, 6),
+  plot.tag = element_text(face = "bold", size = 16, hjust = 0, vjust = 1)
+)
+p1 <- p1 + unify_theme
+p2 <- p2 + unify_theme
+p3 <- p3 + unify_theme
+p4 <- p4 + unify_theme
+p5 <- p5 + unify_theme
+p6 <- p6 + unify_theme
+
+grid_3x2 <- plot_grid(
+  p1, p2, p3,
+  p4, p5, p6,
+  labels = c("A", "B", "C", "D", "E", "F"),
+  label_size = 16,
+  label_fontface = "bold",
+  ncol = 3,
+  align = "hv",   
+  axis = "tblr"  
+)
+
+
+title_row <- ggdraw() +
+  draw_label("Figure 4",
+             x = 0, y = 0.98, hjust = 0, vjust = 1,
+             fontface = "bold", size = 22) +
+  theme(plot.margin = margin(8, 8, 0, 8))
+
+figure4 <- plot_grid(
+  title_row, grid_3x2,
+  ncol = 1, rel_heights = c(0.08, 1)
+)
+```
+
